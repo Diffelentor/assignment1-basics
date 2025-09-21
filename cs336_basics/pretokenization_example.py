@@ -40,17 +40,18 @@ def find_chunk_boundaries(
 
             # Find the special token in the mini chunk
             found_at = mini_chunk.find(split_special_token)
-            if found_at != -1:
+            if found_at != -1:#如果这段有特殊分隔符，则把边界设置到这个位置并跳出循环
                 chunk_boundaries[bi] = initial_position + found_at
                 break
             initial_position += mini_chunk_size
 
     # Make sure all boundaries are unique, but might be fewer than desired_num_chunks
+    print(sorted(set(chunk_boundaries)))
     return sorted(set(chunk_boundaries))
 
 
 ## Usage
-with open(..., "rb") as f:
+with open("data/TinyStoriesV2-GPT4-train.txt", "rb") as f:
     num_processes = 4
     boundaries = find_chunk_boundaries(f, num_processes, b"<|endoftext|>")
 

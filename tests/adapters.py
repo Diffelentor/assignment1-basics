@@ -9,6 +9,11 @@ import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
 
+import regex as re
+from collections import defaultdict
+from typing import Dict, List, Tuple
+from uilts.tokenizer import Tokenizer
+
 
 def run_linear(
     d_in: int,
@@ -559,7 +564,7 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    raise NotImplementedError
+    return Tokenizer(vocab=vocab, merges=merges, special_tokens=special_tokens)
 
 
 def run_train_bpe(
@@ -589,4 +594,112 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
-    raise NotImplementedError
+    # raise NotImplementedError
+    
+    # 读取输入文件
+    with open(input_path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    # 初始化词表和合并规则
+    vocab: Dict[int, bytes] = {i: bytes([i]) for i in range(256)}  # 单字节字符初始化
+    next_id = 256
+
+    # 处理特殊标记
+    for token in special_tokens:
+        vocab[next_id]=token.encode("utf-8")
+        next_id+=1
+    
+    # special_token_pattern = "|".join(re.escape(token) for token in special_tokens)
+    # chunks = re.split(special_token_pattern, data)
+    
+    # 第3步对语料库里的文段进行预分词pre-tokenization：分割文本时保存标点和空格，得到“单词”列表['Hello', ',', ' world', '!', ' This', ' is', ' a', ' test', '.']
+    token_seq_frequency_table = defaultdict(int) # 这里的tokens是token组，例如tuple(['h', 'e', 'l', 'l', 'o'])
+    chunks = re.split("|".join(map(re.escape, special_tokens)), text) #首先按照特殊字符进行大分割，比如<endoftext>按照章节分割
+    # 然后在大分割里小分割，按照空格和标点
+    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    for chunk in chunks:
+        for word in re.findall(PAT, chunk):
+            word_bytes = word.encode("utf-8") #对每一个单词进行编码，并转换为bytes
+            bytes_list = [bytes([x]) for x in word_bytes] #e.g. ['h', 'e', 'l', 'l', 'o']
+            token_seq_frequency_table[tuple(bytes_list)] += 1 #统计每个token出现的频率
+
+
+    merges: List[Tuple[bytes, bytes]] = [] # 用于存储合并操作记录
+
+            
+     # BPE 训练
+    while len(vocab) < vocab_size:
+        # 统计相邻 token 的频率
+        pair_counts = defaultdict(int)
+        for token, cnt in token_seq_frequency_table.items():
+            for i in range(len(token) - 1):
+                pair_counts[(token[i], token[i+1])] += cnt
+
+        # 如果没有更多的对可以合并，停止训练
+        if not pair_counts:
+            break
+
+        # 找到最频繁的对
+        max_count = max(pair_counts.values())
+        # 找出所有频率最高的对，可能不止一个
+        candidates = [k for k, v in pair_counts.items() if v == max_count]
+        # 在候选者中，选择字节序最大的那个
+        best_pair = max(candidates)
+
+        # 将最频繁的对加入词表
+        new_token = best_pair[0] + best_pair[1]
+        vocab[next_id] = new_token #best_pair的两个字符合并成一个新token
+        merges.append(best_pair)
+        next_id += 1
+
+        # 更新 tokenized_chunks，合并最频繁的对
+        # new_tokenized_chunks = []
+        # for tokens in tokenized_chunks:
+        #     new_tokens = []
+        #     i = 0
+        #     while i < len(tokens):
+        #         if i < len(tokens) - 1 and (tokens[i], tokens[i + 1]) == best_pair:
+        #             new_tokens.append(tokens[i] + tokens[i + 1])
+        #             i += 2
+        #         else:
+        #             new_tokens.append(tokens[i])
+        #             i += 1
+        #     new_tokenized_chunks.append(new_tokens)
+        # tokenized_chunks = new_tokenized_chunks
+        affected_token_seq = []
+        for token_seq, freq in token_seq_frequency_table.items():
+            has_pair = any(token_seq[i:i+2] == best_pair for i in range(len(token_seq) - 1))
+            if has_pair:
+                affected_token_seq.append((token_seq, freq))
+        #从受影响的token中出发,每个token就是token_frequency_table的key
+        for token_seq, freq in affected_token_seq:
+            # 删除pair_counts中对应的best_pair
+            # for i in range(len(token) - 1):
+            #     pair_counts[token[i], token[i+1]] -= freq
+            #     if pair_counts[token[i], token[i+1]] <= 0:
+            #         del pair_counts[token[i], token[i+1]]
+            # 将best_pair合并为new_token
+            new_seq = []
+            i = 0
+            while i < len(token_seq):
+                # 检查当前位置是否是最佳对的开始
+                if i < len(token_seq) - 1 and (token_seq[i], token_seq[i+1]) == best_pair:
+                    new_seq.append(new_token)
+                    i += 2
+                else:
+                    new_seq.append(token_seq[i])
+                    i += 1
+            new_seq=tuple(new_seq)
+            # new_token_frequency_seq = merge_token_sequence(token, best_pair, new_token_bytes)
+            # 更新pair_counts
+            # for i in range(len(new_seq)-1):
+            #     pair = (new_seq[i], new_seq[i+1])
+            #     pair_counts[pair] += freq
+            # 更新token_frequency_table
+            del token_seq_frequency_table[token_seq]
+            token_seq_frequency_table[new_seq] += freq
+        
+    # 返回词表和合并规则
+    return vocab, merges
+    
+
