@@ -12,8 +12,12 @@ from torch import Tensor
 import regex as re
 from collections import defaultdict
 from typing import Dict, List, Tuple
-from uilts.tokenizer import Tokenizer
-
+from scripts.tokenizer import Tokenizer
+from scripts.model import *
+from scripts.optimizer import *
+from scripts.utils import *
+from scripts.data import *
+from scripts.serialization import *
 
 def run_linear(
     d_in: int,
@@ -33,8 +37,8 @@ def run_linear(
     Returns:
         Float[Tensor, "... d_out"]: The transformed output of your linear module.
     """
-
-    raise NotImplementedError
+    linear = Linear(in_features=d_in, out_features=d_out, weights=weights)
+    return linear(in_features)
 
 
 def run_embedding(
@@ -56,7 +60,8 @@ def run_embedding(
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
 
-    raise NotImplementedError
+    embedding = Embedding(num_embeddings=vocab_size, embedding_dim=d_model, weights=weights)
+    return embedding(token_ids)
 
 
 def run_swiglu(
@@ -88,13 +93,17 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
-    raise NotImplementedError
+    swiglu = SwiGLU(d_model=d_model, d_ff=d_ff, w1_weight=w1_weight, w2_weight=w2_weight, w3_weight=w3_weight)
+    # swiglu.w1.weight.data.copy_(w1_weight)
+    # swiglu.w2.weight.data.copy_(w2_weight)
+    # swiglu.w3.weight.data.copy_(w3_weight)
+    return swiglu(in_features)
 
 
 def run_scaled_dot_product_attention(
-    Q: Float[Tensor, " ... queries d_k"],
-    K: Float[Tensor, " ... keys d_k"],
-    V: Float[Tensor, " ... values d_v"],
+    Q: Float[Tensor, " ... queries d_k"],# batch_size, ..., seq_len, d_k
+    K: Float[Tensor, " ... keys d_k"],# batch_size, ..., seq_len, d_k
+    V: Float[Tensor, " ... values d_v"],# batch_size, ..., seq_len, d_v
     mask: Bool[Tensor, " ... queries keys"] | None = None,
 ) -> Float[Tensor, " ... queries d_v"]:
     """
@@ -109,7 +118,8 @@ def run_scaled_dot_product_attention(
     Returns:
         Float[Tensor, " ... queries d_v"]: Output of SDPA
     """
-    raise NotImplementedError
+    scaled_dot_product_attention = ScaledDotProductAttention()
+    return scaled_dot_product_attention(Q, K, V, mask)
 
 
 def run_multihead_self_attention(
@@ -143,8 +153,9 @@ def run_multihead_self_attention(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
-
+    # raise NotImplementedError
+    CMHAttention=CausalMultiHeadAttention(d_model, num_heads)
+    return CMHAttention(in_features, q_proj_weight, k_proj_weight, v_proj_weight, o_proj_weight)
 
 def run_multihead_self_attention_with_rope(
     d_model: int,
@@ -183,7 +194,8 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    CMHAttentionwithrope=CausalMultiHeadAttentionWithRoPE(d_model, num_heads, max_seq_len, theta, q_proj_weight, k_proj_weight, v_proj_weight, o_proj_weight)
+    return CMHAttentionwithrope(in_features, token_positions)
 
 
 def run_rope(
@@ -205,7 +217,9 @@ def run_rope(
     Returns:
         Float[Tensor, " ... sequence_length d_k"]: Tensor with RoPEd input.
     """
-    raise NotImplementedError
+    # raise NotImplementedError
+    rope = RoPE(theta=theta, d_k=d_k, max_seq_len=max_seq_len)
+    return rope(in_query_or_key, token_positions)
 
 
 def run_transformer_block(
@@ -278,7 +292,9 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    # raise NotImplementedError
+    trainsformerblock = TransformerBlock(d_model, num_heads, d_ff, max_seq_len, theta, weights)
+    return trainsformerblock(in_features)
 
 
 def run_transformer_lm(
@@ -360,7 +376,8 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    transformoerlm=TransformerLM(vocab_size,context_length,d_model,num_layers,num_heads,d_ff,rope_theta,weights)
+    return transformoerlm(in_indices)
 
 
 def run_rmsnorm(
@@ -383,7 +400,8 @@ def run_rmsnorm(
         Float[Tensor,"... d_model"]: Tensor of with the same shape as `in_features` with the output of running
         RMSNorm of the `in_features`.
     """
-    raise NotImplementedError
+    RMSNormlization = RMSNorm(d_model=d_model, eps=eps, weights=weights)
+    return RMSNormlization(in_features)
 
 
 def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
@@ -397,7 +415,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
+    return in_features * torch.sigmoid(in_features)
 
 
 def run_get_batch(
@@ -420,7 +438,7 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    return get_batch(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
@@ -436,7 +454,7 @@ def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, "
         Float[Tensor, "..."]: Tensor of with the same shape as `in_features` with the output of
         softmax normalizing the specified `dim`.
     """
-    raise NotImplementedError
+    return softmax(in_features, dim)
 
 
 def run_cross_entropy(
@@ -450,11 +468,14 @@ def run_cross_entropy(
             unnormalized logit of jth class for the ith example.
         targets (Int[Tensor, "batch_size"]): Tensor of shape (batch_size,) with the index of the correct class.
             Each value must be between 0 and `num_classes - 1`.
+            
+            即每一个batch_size所对应的正确类别的索引
 
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    # crossentopyloss = CrossEntropyLoss(inputs, targets)
+    return CrossEntropyLoss()(inputs, targets)
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
@@ -466,14 +487,14 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
+    return GradientClip(parameters, max_l2_norm)()
 
 
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return AdamW
 
 
 def run_get_lr_cosine_schedule(
@@ -501,7 +522,7 @@ def run_get_lr_cosine_schedule(
     Returns:
         Learning rate at the given iteration under the specified schedule.
     """
-    raise NotImplementedError
+    return CosineSchedule(max_learning_rate,min_learning_rate,warmup_iters,cosine_cycle_iters)(it)
 
 
 def run_save_checkpoint(
@@ -520,7 +541,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
+    return save_checkpoint(model, optimizer, iteration, out)
 
 
 def run_load_checkpoint(
@@ -541,7 +562,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
+    return load_checkpoint(src, model, optimizer)
 
 
 def get_tokenizer(
@@ -594,112 +615,5 @@ def run_train_bpe(
                 representing that <token1> was merged with <token2>.
                 Merges are ordered by order of creation.
     """
-    # raise NotImplementedError
-    
-    # 读取输入文件
-    with open(input_path, "r", encoding="utf-8") as f:
-        text = f.read()
-
-    # 初始化词表和合并规则
-    vocab: Dict[int, bytes] = {i: bytes([i]) for i in range(256)}  # 单字节字符初始化
-    next_id = 256
-
-    # 处理特殊标记
-    for token in special_tokens:
-        vocab[next_id]=token.encode("utf-8")
-        next_id+=1
-    
-    # special_token_pattern = "|".join(re.escape(token) for token in special_tokens)
-    # chunks = re.split(special_token_pattern, data)
-    
-    # 第3步对语料库里的文段进行预分词pre-tokenization：分割文本时保存标点和空格，得到“单词”列表['Hello', ',', ' world', '!', ' This', ' is', ' a', ' test', '.']
-    token_seq_frequency_table = defaultdict(int) # 这里的tokens是token组，例如tuple(['h', 'e', 'l', 'l', 'o'])
-    chunks = re.split("|".join(map(re.escape, special_tokens)), text) #首先按照特殊字符进行大分割，比如<endoftext>按照章节分割
-    # 然后在大分割里小分割，按照空格和标点
-    PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-    for chunk in chunks:
-        for word in re.findall(PAT, chunk):
-            word_bytes = word.encode("utf-8") #对每一个单词进行编码，并转换为bytes
-            bytes_list = [bytes([x]) for x in word_bytes] #e.g. ['h', 'e', 'l', 'l', 'o']
-            token_seq_frequency_table[tuple(bytes_list)] += 1 #统计每个token出现的频率
-
-
-    merges: List[Tuple[bytes, bytes]] = [] # 用于存储合并操作记录
-
-            
-     # BPE 训练
-    while len(vocab) < vocab_size:
-        # 统计相邻 token 的频率
-        pair_counts = defaultdict(int)
-        for token, cnt in token_seq_frequency_table.items():
-            for i in range(len(token) - 1):
-                pair_counts[(token[i], token[i+1])] += cnt
-
-        # 如果没有更多的对可以合并，停止训练
-        if not pair_counts:
-            break
-
-        # 找到最频繁的对
-        max_count = max(pair_counts.values())
-        # 找出所有频率最高的对，可能不止一个
-        candidates = [k for k, v in pair_counts.items() if v == max_count]
-        # 在候选者中，选择字节序最大的那个
-        best_pair = max(candidates)
-
-        # 将最频繁的对加入词表
-        new_token = best_pair[0] + best_pair[1]
-        vocab[next_id] = new_token #best_pair的两个字符合并成一个新token
-        merges.append(best_pair)
-        next_id += 1
-
-        # 更新 tokenized_chunks，合并最频繁的对
-        # new_tokenized_chunks = []
-        # for tokens in tokenized_chunks:
-        #     new_tokens = []
-        #     i = 0
-        #     while i < len(tokens):
-        #         if i < len(tokens) - 1 and (tokens[i], tokens[i + 1]) == best_pair:
-        #             new_tokens.append(tokens[i] + tokens[i + 1])
-        #             i += 2
-        #         else:
-        #             new_tokens.append(tokens[i])
-        #             i += 1
-        #     new_tokenized_chunks.append(new_tokens)
-        # tokenized_chunks = new_tokenized_chunks
-        affected_token_seq = []
-        for token_seq, freq in token_seq_frequency_table.items():
-            has_pair = any(token_seq[i:i+2] == best_pair for i in range(len(token_seq) - 1))
-            if has_pair:
-                affected_token_seq.append((token_seq, freq))
-        #从受影响的token中出发,每个token就是token_frequency_table的key
-        for token_seq, freq in affected_token_seq:
-            # 删除pair_counts中对应的best_pair
-            # for i in range(len(token) - 1):
-            #     pair_counts[token[i], token[i+1]] -= freq
-            #     if pair_counts[token[i], token[i+1]] <= 0:
-            #         del pair_counts[token[i], token[i+1]]
-            # 将best_pair合并为new_token
-            new_seq = []
-            i = 0
-            while i < len(token_seq):
-                # 检查当前位置是否是最佳对的开始
-                if i < len(token_seq) - 1 and (token_seq[i], token_seq[i+1]) == best_pair:
-                    new_seq.append(new_token)
-                    i += 2
-                else:
-                    new_seq.append(token_seq[i])
-                    i += 1
-            new_seq=tuple(new_seq)
-            # new_token_frequency_seq = merge_token_sequence(token, best_pair, new_token_bytes)
-            # 更新pair_counts
-            # for i in range(len(new_seq)-1):
-            #     pair = (new_seq[i], new_seq[i+1])
-            #     pair_counts[pair] += freq
-            # 更新token_frequency_table
-            del token_seq_frequency_table[token_seq]
-            token_seq_frequency_table[new_seq] += freq
-        
-    # 返回词表和合并规则
-    return vocab, merges
-    
-
+    tokenizer = Tokenizer.from_txt(input_path, vocab_size, special_tokens)
+    return tokenizer.vocab, tokenizer.merges
