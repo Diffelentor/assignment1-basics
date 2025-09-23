@@ -74,13 +74,16 @@ class Tokenizer:
         self.PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
         
         self.vocab = vocab
+        self.vocab_size = len(vocab)
         self.byte_to_token_id = {v: k for k, v in vocab.items()}
         
         self.merges = merges
         self.merges_priority_map = {pair: i for i, pair in enumerate(self.merges)}
         
         self.special_tokens = special_tokens if special_tokens else []
-        self.eos_token_id = self.byte_to_token_id[self.eos_token.encode('utf-8')]
+        if "<|endoftext|>" in self.special_tokens:
+            self.eos_token = "<|endoftext|>"
+            self.eos_token_id = self.byte_to_token_id[self.eos_token.encode('utf-8')]
         
          
     @classmethod
@@ -351,20 +354,20 @@ class Tokenizer:
             vocab_filepath: 保存 vocab 的 JSON 文件路径
             merges_filepath: 保存 merges 的 TXT 文件路径
         """
-        # 获取 GPT2 字节到 unicode 的映射（和 from_files 一致）
-        gpt2_byte_encoder = gpt2_bytes_to_unicode()
+        gpt2_encoder = gpt2_bytes_to_unicode()
 
-        # 保存 vocab (id -> string)
-        vocab_serializable = {
-            str(token_id): ''.join([gpt2_byte_encoder[b] for b in token_bytes])
-            for token_id, token_bytes in self.vocab.items()
-        }
+        # === 保存 vocab.json ===
+        vocab_to_save = {}
+        for token_id, token_bytes in self.vocab.items():
+            token_str = "".join(gpt2_encoder[b] for b in token_bytes)
+            vocab_to_save[token_str] = token_id
+
         with open(vocab_filepath, "w", encoding="utf-8") as f:
-            json.dump(vocab_serializable, f, ensure_ascii=False, indent=2)
+            json.dump(vocab_to_save, f, ensure_ascii=False, indent=2)
 
-        # 保存 merges (两个 token 拼接，空格分隔)
+        # === 保存 merges.txt ===
         with open(merges_filepath, "w", encoding="utf-8") as f:
             for a, b in self.merges:
-                a_str = ''.join([gpt2_byte_encoder[x] for x in a])
-                b_str = ''.join([gpt2_byte_encoder[x] for x in b])
+                a_str = "".join(gpt2_encoder[byte] for byte in a)
+                b_str = "".join(gpt2_encoder[byte] for byte in b)
                 f.write(f"{a_str} {b_str}\n")

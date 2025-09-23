@@ -9,13 +9,13 @@ import torch.nn as nn
 import json
 
 # Import from your custom scripts
-from data import get_batch
-from model import TransformerLM
-from optimizer import AdamW
-from serialization import save_checkpoint, load_checkpoint
-from tokenizer import Tokenizer
-from inference import generate
-from utils import count_parameters
+from .data import get_batch, Dataset
+from .model import TransformerLM
+from .optimizer import AdamW
+from .serialization import save_checkpoint, load_checkpoint
+from .tokenizer import Tokenizer
+from .inference import generate
+from .utils import count_parameters
 
 def initialize_weights(
     vocab_size: int,
@@ -90,8 +90,9 @@ def evaluate(model, dataset: np.ndarray, context_length: int, batch_size: int, d
 def main():
     parser = argparse.ArgumentParser(description="Train a Transformer Language Model")
     # Data and paths
-    parser.add_argument('--train_data', type=str, required=True, help='Path to training data file.')
-    parser.add_argument('--val_data', type=str, required=True, help='Path to validation data file.')
+    parser.add_argument('--dataset', type=str, required=True, help='Path to training data file.')
+    parser.add_argument('--train_text', type=str, help='Path to training data file.')
+    parser.add_argument('--val_text', type=str, help='Path to training data file.')
     parser.add_argument('--output_dir', type=str, default='out', help='Directory to save tokenizer and model checkpoints.')
     
     # Tokenizer
@@ -108,7 +109,7 @@ def main():
     # Training hyperparameters
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training.')
     parser.add_argument('--max_iters', type=int, default=5000, help='Total training iterations.')
-    parser.add_argument('--learning_rate', type=float, default=3e-4, help='Learning rate.')
+    parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate.')
     parser.add_argument('--eval_interval', type=int, default=250, help='Evaluate every N iterations.')
     parser.add_argument('--seed', type=int, default=1337, help='Random seed.')
 
@@ -140,29 +141,54 @@ def main():
             special_tokens=special_tokens
         )
         # Save the trained tokenizer
-        # Vocab saving
-        gpt2_vocab = {
-            "".join([chr(b) for b in tokenizer.vocab[i]]): i
-            for i in range(tokenizer.vocab_size)
-        }
-        with open(vocab_path, "w", encoding="utf-8") as f:
-            json.dump(gpt2_vocab, f, ensure_ascii=False, indent=2)
-        
-        # Merges saving
-        with open(merges_path, "w", encoding="utf-8") as f:
-            for p1, p2 in tokenizer.merges:
-                f.write(f"$" + "".join([chr(b) for b in p1]) + " " + "".join([chr(b) for b in p2]) + "\n")
+        tokenizer.save_files(vocab_path,merges_path)
         print(f"Tokenizer saved to {output_dir}")
 
     # --- Data Loading ---
-    print("Loading and tokenizing data...")
-    with open(args.train_data, 'r', encoding='utf-8') as f:
-        train_text = f.read()
-    with open(args.val_data, 'r', encoding='utf-8') as f:
-        val_text = f.read()
 
-    train_data = np.array(tokenizer.encode(train_text), dtype=np.int64)
-    val_data = np.array(tokenizer.encode(val_text), dtype=np.int64)
+        dataset_path = f"data/{args.dataset}"
+        train_file = f"{dataset_path}/train.bin"
+        val_file = f"{dataset_path}/val.bin"
+
+        if not (os.path.exists(train_file) and os.path.exists(val_file)):
+            print(f"❌ 数据集 {args.dataset} 尚未切分，正在重新保存...")
+            os.makedirs(dataset_path, exist_ok=True)
+
+            print("Loading and tokenizing data...")
+            if args.train_text is None or args.val_text is None:
+                raise ValueError("Please provide --train_text and --val_text paths for training and validation data.")
+
+            # 读取原始文本
+            with open(args.train_text, "r", encoding="utf-8") as f:
+                train_text = f.read()
+            with open(args.val_text, "r", encoding="utf-8") as f:
+                val_text = f.read()
+
+            # 分词并转为 numpy 数组（uint16 更省空间）
+            train_data = tokenizer.encode_tensor(train_text).numpy().astype(np.uint16)
+            val_data = tokenizer.encode_tensor(val_text).numpy().astype(np.uint16)
+
+            # 保存为二进制文件
+            train_data.tofile(train_file)
+            val_data.tofile(val_file)
+            print(f"✅ 已保存到 {train_file}, {val_file}")
+
+            # 构造 Dataset
+            dataset = Dataset(args.dataset, args.context_length, args.batch_size, device)
+
+        else:
+            print(f"✅ 已找到现有切分数据 {train_file}, {val_file}")
+            dataset = Dataset(args.dataset, args.context_length, args.batch_size, device)
+
+    
+    # print("Loading and tokenizing data...")
+    # with open(args.train_data, 'r', encoding='utf-8') as f:
+    #     train_text = f.read()
+    # with open(args.val_data, 'r', encoding='utf-8') as f:
+    #     val_text = f.read()
+
+    train_data = tokenizer.encode_tensor(train_text)
+    val_data = tokenizer.encode_tensor(val_text)
     print(f"Train data has {len(train_data):,} tokens.")
     print(f"Validation data has {len(val_data):,} tokens.")
 
