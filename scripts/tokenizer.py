@@ -342,3 +342,29 @@ class Tokenizer:
             
         # 返回词表和合并规则
         return cls(vocab=vocab, merges=merges, special_tokens=special_tokens)
+    
+    def save_files(self, vocab_filepath: str, merges_filepath: str) -> None:
+        """
+        将 Tokenizer 的 vocab 和 merges 保存到文件，便于以后用 from_files 加载。
+
+        Args:
+            vocab_filepath: 保存 vocab 的 JSON 文件路径
+            merges_filepath: 保存 merges 的 TXT 文件路径
+        """
+        # 获取 GPT2 字节到 unicode 的映射（和 from_files 一致）
+        gpt2_byte_encoder = gpt2_bytes_to_unicode()
+
+        # 保存 vocab (id -> string)
+        vocab_serializable = {
+            str(token_id): ''.join([gpt2_byte_encoder[b] for b in token_bytes])
+            for token_id, token_bytes in self.vocab.items()
+        }
+        with open(vocab_filepath, "w", encoding="utf-8") as f:
+            json.dump(vocab_serializable, f, ensure_ascii=False, indent=2)
+
+        # 保存 merges (两个 token 拼接，空格分隔)
+        with open(merges_filepath, "w", encoding="utf-8") as f:
+            for a, b in self.merges:
+                a_str = ''.join([gpt2_byte_encoder[x] for x in a])
+                b_str = ''.join([gpt2_byte_encoder[x] for x in b])
+                f.write(f"{a_str} {b_str}\n")

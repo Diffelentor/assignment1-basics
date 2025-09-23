@@ -616,4 +616,7 @@ def run_train_bpe(
                 Merges are ordered by order of creation.
     """
     tokenizer = Tokenizer.from_txt(input_path, vocab_size, special_tokens)
+    vocab_path = os.path.dirname(input_path) / "vocab.json"
+    merges_path = os.path.dirname(input_path) / "merges.txt"
+    tokenizer.save_files(vocab_path, merges_path)
     return tokenizer.vocab, tokenizer.merges
