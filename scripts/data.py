@@ -24,7 +24,7 @@ class TokenDataset(torch.utils.data.Dataset):
     def __len__(self):
         # 留一个预测用的 y，所以长度要减去 context_length
         # return len(self.data) - self.context_length
-        return len(self.data)
+        return len(self.data) - self.context_length
 
     def __getitem__(self, idx):
         x = torch.tensor(self.data[idx:idx+self.context_length])

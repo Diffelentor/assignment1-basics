@@ -73,7 +73,8 @@ class AdamW(torch.optim.Optimizer):
                 step_size = group['lr'] * math.sqrt(bias_correction2) / bias_correction1 # 标量math.sqrt比**0.5快
                 
                 denom = v.sqrt().add_(group['eps']) 
-                p.data.addcdiv_(-step_size, m, denom) #+先乘后除
+                # p.data.addcdiv_(-step_size, m, denom) #+先乘后除
+                p.data.addcdiv_(m, denom, value=-step_size)
                 # p.data.addcdiv_(m, denom, value=-step_size)
 
                 # 解耦权重衰减,直接减，不要修改梯度

@@ -209,11 +209,17 @@ class Tokenizer:
             chunks = regex.split(f'({special_token_pattern})', text)
         else:
             chunks = [text]
-
         token_ids = []
         for chunk in chunks:
+            # print(self._encode_chunk(chunk))
             token_ids.extend(self._encode_chunk(chunk))
         return token_ids
+    
+    def encode_text_path(self, text_path: str) -> list[int]:
+        # 读取输入文件
+        with open(text_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        return self.encode(text)
     
     def encode_tensor(self, text: str, device=None) -> torch.Tensor:
         ids = self.encode(text)
@@ -373,5 +379,5 @@ class Tokenizer:
                 b_str = "".join(gpt2_encoder[byte] for byte in b)
                 f.write(f"{a_str} {b_str}\n")
                 
-    def save_token_ids(self, token_ids_path, text_path):
-        np.save(token_ids_path, np.array(self.encode(text_path)))
+    def save_token_ids_from_text_path(self, token_ids_path, text_path):
+        np.save(token_ids_path, np.array(self.encode_text_path(text_path)))

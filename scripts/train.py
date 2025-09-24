@@ -9,15 +9,16 @@ import torch.nn as nn
 import json
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
+from itertools import islice
 
 # Import from your custom scripts
-from .data import get_batch, TokenDataset
-from .model import TransformerLM
-from .optimizer import AdamW
-from .serialization import save_checkpoint, load_checkpoint
-from .tokenizer import Tokenizer
-from .inference import generate
-from .utils import CrossEntropyLoss
+from scripts.data import get_batch, TokenDataset
+from scripts.model import TransformerLM
+from scripts.optimizer import AdamW
+from scripts.serialization import save_checkpoint, load_checkpoint
+from scripts.tokenizer import Tokenizer
+from scripts.inference import generate
+from scripts.utils import CrossEntropyLoss
 
 
 
@@ -92,7 +93,7 @@ def getDataset(dataset_path, context_length, vocab_size ,split="train"):
         print(f"✅ 已找到现有词汇表和合并表 {vocab_path} {merges_path}")
         tokenizer = Tokenizer.from_files(vocab_path, merges_path, special_tokens=special_tokens)
         print(f"✅ 保存解码的Token_ids到 {token_ids_path}")
-        tokenizer.save_token_ids(token_ids_path, text_path)
+        tokenizer.save_token_ids_from_text_path(token_ids_path, text_path)
         
     else:
         print(f"✅ 从头开始构建词汇表和合并表 {vocab_path} {merges_path}")
@@ -105,7 +106,7 @@ def getDataset(dataset_path, context_length, vocab_size ,split="train"):
         print(f"✅ 保存词汇表和合并表 {vocab_path} {merges_path}")
         tokenizer.save_vocab_merges(vocab_path,merges_path)
         print(f"✅ 保存解码的Token_ids到 {token_ids_path}")
-        tokenizer.save_token_ids(token_ids_path, text_path)
+        tokenizer.save_token_ids_from_text_path(token_ids_path, text_path)
     print(f"获取数据集")
     return TokenDataset(token_ids_path, context_length),tokenizer
     
@@ -133,7 +134,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train a Transformer Language Model")
     # Data and paths
     parser.add_argument('--train_dataset', type=str, required=True, help='Path to training data file.')
-    parser.add_argument('--val_dataset', type=str, required=True, help='Path to training data file.')
+    # parser.add_argument('--val_dataset', type=str, required=True, help='Path to training data file.')
     parser.add_argument('--output_dir', type=str, default='out', help='Directory to save tokenizer and model checkpoints.')
     
     # Tokenizer
@@ -148,10 +149,10 @@ def main():
     parser.add_argument('--rope_theta', type=float, default=10000.0, help='RoPE theta value.')
 
     # Training hyperparameters
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training.')
-    parser.add_argument('--max_iters', type=int, default=5000, help='Total training iterations.')
+    parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training.')
+    parser.add_argument('--max_iters', type=int, default=500000, help='Total training iterations.')
     parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate.')
-    parser.add_argument('--eval_interval', type=int, default=250, help='Evaluate every N iterations.')
+    parser.add_argument('--eval_interval', type=int, default=1, help='Evaluate every N iterations.')
     parser.add_argument('--seed', type=int, default=1337, help='Random seed.')
 
     args = parser.parse_args()
@@ -170,7 +171,7 @@ def main():
     val_dataset,tokenizer = getDataset(args.train_dataset, args.context_length, args.vocab_size, split="val")
     val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
-    print(f"Train data has {len(train_dataset):,} tokens.")
+    print(f"Train data has {len(train_dataset)} tokens.")
 
     # --- Model Initialization ---
     print("Initializing model...")
@@ -206,10 +207,10 @@ def main():
     start_time = time.time()
 
     iteration = 0
-    for epoch in range(args.max_iters/len(train_dataloader) + 1):
+    for epoch in range(args.max_iters//len(train_dataloader) + 1):
         # Get a batch of data
-        with tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{args.max_iters/len(train_dataloader) + 1}", unit="iter") as t:
-            for x, y in t:
+        with tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{args.max_iters//len(train_dataloader) + 1}", unit="iter") as trainbar:
+            for x, y in trainbar:
                 # Forward pass
                 logits = model(x)
                 
@@ -224,27 +225,44 @@ def main():
                 loss.backward()
                 optimizer.step()
                 
-                t.set_postfix({"loss": f"{loss.item():.4f}"})
+                trainbar.set_postfix({"loss": f"{loss.item():.4f}"})
                 iteration+=1
 
                 # Evaluate and log
                 if iteration % args.eval_interval == 0 or iteration == args.max_iters - 1:
-                    val_loss = evaluate(model, val_data, args.context_length, args.batch_size, device)
+                    val_losses = []
+                    with torch.no_grad():
+                        model.eval()
+                        with tqdm(islice(val_dataloader, 50), total=50, desc=f"Val {epoch+1}/{args.max_iters//len(train_dataloader) + 1}", unit="iter") as valbar:
+                            for x, y in valbar:
+                                # Forward pass
+                                logits = model(x)
+                                
+                                # Calculate loss
+                                b, t, c = logits.shape
+                                logits_view = logits.view(b * t, c)
+                                y_view = y.view(b * t)
+                                val_loss = CrossEntropyLoss()(logits_view, y_view)
+                                val_losses.append(val_loss.item())
+                        model.train()
+                    val_loss = np.mean(val_losses)
                     duration = time.time() - start_time
-                    print(f"Iter {i:5d} | Train Loss: {loss.item():.4f} | Val Loss: {val_loss:.4f} | Time: {duration:.2f}s")
+                    print(f"\nIter {iteration:5d} | Train Loss: {loss.item():.4f} | Val Loss: {val_loss:.4f} | Time: {duration:.2f}s")
+                    checkpoint_path = os.path.join(args.output_dir , f"model_{iteration}.pt")
+                    save_checkpoint(model, optimizer, iteration, checkpoint_path)
                     
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
-                        checkpoint_path = output_dir / "best_model.pt"
+                        checkpoint_path = os.path.join(args.output_dir , "model_best.pt")
                         print(f"New best validation loss. Saving model to {checkpoint_path}")
-                        save_checkpoint(model, optimizer, i, str(checkpoint_path))
+                        save_checkpoint(model, optimizer, iteration, checkpoint_path)
     
     print("Training finished.")
 
     # --- Inference Demo ---
     print("\n--- Generating text from the best model ---")
     # Load the best model
-    best_model_path = str(output_dir / "best_model.pt")
+    best_model_path = os.path.join(args.output_dir , "model_best.pt")
     if os.path.exists(best_model_path):
         _ = load_checkpoint(best_model_path, model, optimizer)
         model.to(device)
