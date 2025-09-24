@@ -3,6 +3,7 @@ from torch import nn
 from collections.abc import Callable, Iterable
 from typing import Optional
 import math
+from torch.optim.lr_scheduler import _LRScheduler
 
 class SGD(torch.optim.Optimizer):
     def __init__(self, params, lr=1e-3):
@@ -100,3 +101,28 @@ class CosineSchedule:
             return self.min_learning_rate
         else:
             return self.min_learning_rate + 0.5 * (1 + math.cos(math.pi * (it - self.warmup_iters) / (self.cosine_cycle_iters - self.warmup_iters))) * (self.max_learning_rate - self.min_learning_rate)
+        
+
+class CosineScheduleLR(_LRScheduler):
+    """
+    Cosine learning rate scheduler with linear warmup and optional min_lr floor.
+    Compatible with PyTorch's lr_scheduler interface.
+    """
+    def __init__(self, optimizer, max_lr, min_lr, warmup_iters, cosine_cycle_iters, last_iter=-1):
+        self.max_lr = max_lr
+        self.min_lr = min_lr
+        self.warmup_iters = warmup_iters
+        self.cosine_cycle_iters = cosine_cycle_iters
+        super().__init__(optimizer, last_iter)
+
+    def get_lr(self):
+        # last_iter 在 PyTorch 中就是迭代步数
+        if self.last_epoch < self.warmup_iters:
+            lr = self.last_epoch * self.max_lr / self.warmup_iters
+        elif self.last_epoch > self.cosine_cycle_iters:
+            lr = self.min_lr
+        else:
+            lr = self.min_lr + 0.5 * (1 + math.cos(
+                math.pi * (self.last_epoch - self.warmup_iters) / (self.cosine_cycle_iters - self.warmup_iters)
+            )) * (self.max_lr - self.min_lr)
+        return [lr for _ in self.optimizer.param_groups]  # 返回每个 param_group 的 lr

@@ -10,16 +10,27 @@ import json
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from itertools import islice
+import wandb
+from datetime import datetime   
 
 # Import from your custom scripts
 from scripts.data import get_batch, TokenDataset
 from scripts.model import TransformerLM
-from scripts.optimizer import AdamW
+from scripts.optimizer import AdamW,CosineScheduleLR
 from scripts.serialization import save_checkpoint, load_checkpoint
 from scripts.tokenizer import Tokenizer
 from scripts.inference import generate
 from scripts.utils import CrossEntropyLoss
 
+
+# 生成时间戳实验名
+run_name = f"experiment-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+# 初始化 wandb
+wandb.init(
+    project="cs336_spring2025_assignment1",   # 换成你的项目名
+    name=run_name
+)
 
 
 def initialize_weights(
@@ -151,8 +162,8 @@ def main():
     # Training hyperparameters
     parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training.')
     parser.add_argument('--max_iters', type=int, default=500000, help='Total training iterations.')
-    parser.add_argument('--learning_rate', type=float, default=1e-3, help='Learning rate.')
-    parser.add_argument('--eval_interval', type=int, default=1, help='Evaluate every N iterations.')
+    parser.add_argument('--learning_rate', type=float, default=3e-4, help='Learning rate.')
+    parser.add_argument('--eval_interval', type=int, default=250, help='Evaluate every N iterations.')
     parser.add_argument('--seed', type=int, default=1337, help='Random seed.')
 
     args = parser.parse_args()
@@ -200,6 +211,13 @@ def main():
 
     # --- Optimizer ---
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
+    scheduler = CosineScheduleLR(
+        optimizer,
+        max_lr=3e-4,
+        min_lr=1e-5,
+        warmup_iters=1000,
+        cosine_cycle_iters=10000
+    )
     
     # --- Training Loop ---
     print("Starting training...")
@@ -224,9 +242,18 @@ def main():
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 optimizer.step()
+                # 更新学习率
+                scheduler.step()
+                
                 
                 trainbar.set_postfix({"loss": f"{loss.item():.4f}"})
                 iteration+=1
+                
+                wandb.log({
+                    "train/loss": loss.item(),
+                    "train/lr": scheduler.get_last_lr()[0],
+                    "step": iteration
+                })
 
                 # Evaluate and log
                 if iteration % args.eval_interval == 0 or iteration == args.max_iters - 1:
@@ -257,6 +284,7 @@ def main():
                         print(f"New best validation loss. Saving model to {checkpoint_path}")
                         save_checkpoint(model, optimizer, iteration, checkpoint_path)
     
+    wandb.finish()
     print("Training finished.")
 
     # --- Inference Demo ---
