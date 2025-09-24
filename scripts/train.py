@@ -32,6 +32,9 @@ wandb.init(
     name=run_name
 )
 
+def count_parameters(model: nn.Module) -> int:
+    """Counts the number of trainable parameters in a model."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 def initialize_weights(
     vocab_size: int,
@@ -207,7 +210,7 @@ def main():
         weights=model_weights
     ).to(device)
     
-    # print(f"Model has {count_parameters(model):,} parameters.")
+    print(f"Model has {count_parameters(model):,} parameters.")
 
     # --- Optimizer ---
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
@@ -229,6 +232,7 @@ def main():
         # Get a batch of data
         with tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{args.max_iters//len(train_dataloader) + 1}", unit="iter") as trainbar:
             for x, y in trainbar:
+                x, y = x.to(device), y.to(device)
                 iteration+=1
                 if iteration > args.max_iters:
                     break
@@ -268,6 +272,7 @@ def main():
                         model.eval()
                         with tqdm(islice(val_dataloader, 50), total=50, desc=f"Val {epoch+1}/{args.max_iters//len(train_dataloader) + 1}", unit="iter") as valbar:
                             for x, y in valbar:
+                                x, y = x.to(device), y.to(device)
                                 # Forward pass
                                 logits = model(x)
                                 
