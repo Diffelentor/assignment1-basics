@@ -163,10 +163,10 @@ def main():
     parser.add_argument('--rope_theta', type=float, default=10000.0, help='RoPE theta value.')
 
     # Training hyperparameters
-    parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training.')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size for training.')
     parser.add_argument('--max_iters', type=int, default=500000, help='Total training iterations.')
     parser.add_argument('--learning_rate', type=float, default=3e-4, help='Learning rate.')
-    parser.add_argument('--eval_interval', type=int, default=10, help='Evaluate every N iterations.')
+    parser.add_argument('--eval_interval', type=int, default=5000, help='Evaluate every N iterations.')
     parser.add_argument('--seed', type=int, default=1337, help='Random seed.')
 
     args = parser.parse_args()
