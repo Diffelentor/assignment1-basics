@@ -163,7 +163,7 @@ def main():
     parser.add_argument('--batch_size', type=int, default=4, help='Batch size for training.')
     parser.add_argument('--max_iters', type=int, default=500000, help='Total training iterations.')
     parser.add_argument('--learning_rate', type=float, default=3e-4, help='Learning rate.')
-    parser.add_argument('--eval_interval', type=int, default=250, help='Evaluate every N iterations.')
+    parser.add_argument('--eval_interval', type=int, default=10, help='Evaluate every N iterations.')
     parser.add_argument('--seed', type=int, default=1337, help='Random seed.')
 
     args = parser.parse_args()
@@ -229,6 +229,9 @@ def main():
         # Get a batch of data
         with tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{args.max_iters//len(train_dataloader) + 1}", unit="iter") as trainbar:
             for x, y in trainbar:
+                iteration+=1
+                if iteration > args.max_iters:
+                    break
                 # Forward pass
                 logits = model(x)
                 
@@ -246,8 +249,11 @@ def main():
                 scheduler.step()
                 
                 
-                trainbar.set_postfix({"loss": f"{loss.item():.4f}"})
-                iteration+=1
+                trainbar.set_postfix({
+                    "loss": f"{loss.item():.4f}",
+                    "lr": f"{scheduler.get_last_lr()[0]:.6f}"
+                })
+                
                 
                 wandb.log({
                     "train/loss": loss.item(),
@@ -256,7 +262,7 @@ def main():
                 })
 
                 # Evaluate and log
-                if iteration % args.eval_interval == 0 or iteration == args.max_iters - 1:
+                if (iteration-1) % args.eval_interval == 0 or iteration == args.max_iters:
                     val_losses = []
                     with torch.no_grad():
                         model.eval()
@@ -274,7 +280,8 @@ def main():
                         model.train()
                     val_loss = np.mean(val_losses)
                     duration = time.time() - start_time
-                    print(f"\nIter {iteration:5d} | Train Loss: {loss.item():.4f} | Val Loss: {val_loss:.4f} | Time: {duration:.2f}s")
+                    # print(f"Iter {iteration:5d} | Train Loss: {loss.item():.4f} | Val Loss: {val_loss:.4f} | Time: {duration:.2f}s")
+                    tqdm.write(f"Iter {iteration:5d} | Train Loss: {loss.item():.4f} | Val Loss: {val_loss:.4f} | Time: {duration:.2f}s")
                     checkpoint_path = os.path.join(args.output_dir , f"model_{iteration}.pt")
                     save_checkpoint(model, optimizer, iteration, checkpoint_path)
                     
