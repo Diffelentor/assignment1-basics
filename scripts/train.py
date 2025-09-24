@@ -7,15 +7,19 @@ import numpy as np
 import torch
 import torch.nn as nn
 import json
+from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 
 # Import from your custom scripts
-from .data import get_batch, Dataset
+from .data import get_batch, TokenDataset
 from .model import TransformerLM
 from .optimizer import AdamW
 from .serialization import save_checkpoint, load_checkpoint
 from .tokenizer import Tokenizer
 from .inference import generate
-from .utils import count_parameters
+from .utils import CrossEntropyLoss
+
+
 
 def initialize_weights(
     vocab_size: int,
@@ -68,6 +72,44 @@ def initialize_weights(
     
     return weights
 
+def getDataset(dataset_path, context_length, vocab_size ,split="train"): 
+    text_path = dataset_path + ".txt"
+    token_ids_path = os.path.join(dataset_path , "token_ids_train.npy")
+    vocab_path = os.path.join(dataset_path , "vocab.json")
+    merges_path = os.path.join(dataset_path , "merges.txt")
+    special_tokens = ["<|endoftext|>"]
+    
+    text_path.replace("train",split)
+    token_ids_path.replace("train",split)
+    if split!="train":
+        assert os.path.exists(vocab_path) and os.path.exists(merges_path), "验证集或测试集需要现有的词汇表和合并表"
+    
+    if os.path.exists(token_ids_path):
+        print(f"✅ 已找到现有切分数据 {token_ids_path}")
+        tokenizer = Tokenizer.from_files(vocab_path, merges_path, special_tokens=special_tokens)
+        
+    elif os.path.exists(vocab_path) and os.path.exists(merges_path):
+        print(f"✅ 已找到现有词汇表和合并表 {vocab_path} {merges_path}")
+        tokenizer = Tokenizer.from_files(vocab_path, merges_path, special_tokens=special_tokens)
+        print(f"✅ 保存解码的Token_ids到 {token_ids_path}")
+        tokenizer.save_token_ids(token_ids_path, text_path)
+        
+    else:
+        print(f"✅ 从头开始构建词汇表和合并表 {vocab_path} {merges_path}")
+        tokenizer = Tokenizer.from_txt(
+            input_path=text_path,
+            vocab_size=vocab_size,
+            special_tokens=special_tokens
+        )
+        # Save the trained tokenizer
+        print(f"✅ 保存词汇表和合并表 {vocab_path} {merges_path}")
+        tokenizer.save_vocab_merges(vocab_path,merges_path)
+        print(f"✅ 保存解码的Token_ids到 {token_ids_path}")
+        tokenizer.save_token_ids(token_ids_path, text_path)
+    print(f"获取数据集")
+    return TokenDataset(token_ids_path, context_length),tokenizer
+    
+
 @torch.no_grad()
 def evaluate(model, dataset: np.ndarray, context_length: int, batch_size: int, device: str, eval_iters: int = 100):
     """
@@ -90,9 +132,8 @@ def evaluate(model, dataset: np.ndarray, context_length: int, batch_size: int, d
 def main():
     parser = argparse.ArgumentParser(description="Train a Transformer Language Model")
     # Data and paths
-    parser.add_argument('--dataset', type=str, required=True, help='Path to training data file.')
-    parser.add_argument('--train_text', type=str, help='Path to training data file.')
-    parser.add_argument('--val_text', type=str, help='Path to training data file.')
+    parser.add_argument('--train_dataset', type=str, required=True, help='Path to training data file.')
+    parser.add_argument('--val_dataset', type=str, required=True, help='Path to training data file.')
     parser.add_argument('--output_dir', type=str, default='out', help='Directory to save tokenizer and model checkpoints.')
     
     # Tokenizer
@@ -121,76 +162,15 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    os.makedirs(args.train_dataset, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
 
-    # --- Tokenizer ---
-    print("Initializing tokenizer...")
-    vocab_path = output_dir / "vocab.json"
-    merges_path = output_dir / "merges.txt"
-    special_tokens = ["<|endoftext|>"]
+    train_dataset,tokenizer = getDataset(args.train_dataset, args.context_length, args.vocab_size)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_dataset,tokenizer = getDataset(args.train_dataset, args.context_length, args.vocab_size, split="val")
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
 
-    if vocab_path.exists() and merges_path.exists():
-        print("Loading existing tokenizer.")
-        tokenizer = Tokenizer.from_files(str(vocab_path), str(merges_path), special_tokens=special_tokens)
-    else:
-        print("Training tokenizer from scratch...")
-        tokenizer = Tokenizer.from_txt(
-            input_path=args.train_data,
-            vocab_size=args.vocab_size,
-            special_tokens=special_tokens
-        )
-        # Save the trained tokenizer
-        tokenizer.save_files(vocab_path,merges_path)
-        print(f"Tokenizer saved to {output_dir}")
-
-    # --- Data Loading ---
-
-        dataset_path = f"data/{args.dataset}"
-        train_file = f"{dataset_path}/train.bin"
-        val_file = f"{dataset_path}/val.bin"
-
-        if not (os.path.exists(train_file) and os.path.exists(val_file)):
-            print(f"❌ 数据集 {args.dataset} 尚未切分，正在重新保存...")
-            os.makedirs(dataset_path, exist_ok=True)
-
-            print("Loading and tokenizing data...")
-            if args.train_text is None or args.val_text is None:
-                raise ValueError("Please provide --train_text and --val_text paths for training and validation data.")
-
-            # 读取原始文本
-            with open(args.train_text, "r", encoding="utf-8") as f:
-                train_text = f.read()
-            with open(args.val_text, "r", encoding="utf-8") as f:
-                val_text = f.read()
-
-            # 分词并转为 numpy 数组（uint16 更省空间）
-            train_data = tokenizer.encode_tensor(train_text).numpy().astype(np.uint16)
-            val_data = tokenizer.encode_tensor(val_text).numpy().astype(np.uint16)
-
-            # 保存为二进制文件
-            train_data.tofile(train_file)
-            val_data.tofile(val_file)
-            print(f"✅ 已保存到 {train_file}, {val_file}")
-
-            # 构造 Dataset
-            dataset = Dataset(args.dataset, args.context_length, args.batch_size, device)
-
-        else:
-            print(f"✅ 已找到现有切分数据 {train_file}, {val_file}")
-            dataset = Dataset(args.dataset, args.context_length, args.batch_size, device)
-
-    
-    # print("Loading and tokenizing data...")
-    # with open(args.train_data, 'r', encoding='utf-8') as f:
-    #     train_text = f.read()
-    # with open(args.val_data, 'r', encoding='utf-8') as f:
-    #     val_text = f.read()
-
-    train_data = tokenizer.encode_tensor(train_text)
-    val_data = tokenizer.encode_tensor(val_text)
-    print(f"Train data has {len(train_data):,} tokens.")
-    print(f"Validation data has {len(val_data):,} tokens.")
+    print(f"Train data has {len(train_dataset):,} tokens.")
 
     # --- Model Initialization ---
     print("Initializing model...")
@@ -215,7 +195,7 @@ def main():
         weights=model_weights
     ).to(device)
     
-    print(f"Model has {count_parameters(model):,} parameters.")
+    # print(f"Model has {count_parameters(model):,} parameters.")
 
     # --- Optimizer ---
     optimizer = AdamW(model.parameters(), lr=args.learning_rate)
@@ -225,35 +205,39 @@ def main():
     best_val_loss = float('inf')
     start_time = time.time()
 
-    for i in range(args.max_iters):
+    iteration = 0
+    for epoch in range(args.max_iters/len(train_dataloader) + 1):
         # Get a batch of data
-        x, y = get_batch(train_data, args.batch_size, args.context_length, device)
+        with tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{args.max_iters/len(train_dataloader) + 1}", unit="iter") as t:
+            for x, y in t:
+                # Forward pass
+                logits = model(x)
+                
+                # Calculate loss
+                b, t, c = logits.shape
+                logits_view = logits.view(b * t, c)
+                y_view = y.view(b * t)
+                loss = CrossEntropyLoss()(logits_view, y_view)
 
-        # Forward pass
-        logits = model(x)
-        
-        # Calculate loss
-        b, t, c = logits.shape
-        logits_view = logits.view(b * t, c)
-        y_view = y.view(b * t)
-        loss = nn.functional.cross_entropy(logits_view, y_view)
+                # Backward pass and optimization
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                optimizer.step()
+                
+                t.set_postfix({"loss": f"{loss.item():.4f}"})
+                iteration+=1
 
-        # Backward pass and optimization
-        optimizer.zero_grad(set_to_none=True)
-        loss.backward()
-        optimizer.step()
-
-        # Evaluate and log
-        if i % args.eval_interval == 0 or i == args.max_iters - 1:
-            val_loss = evaluate(model, val_data, args.context_length, args.batch_size, device)
-            duration = time.time() - start_time
-            print(f"Iter {i:5d} | Train Loss: {loss.item():.4f} | Val Loss: {val_loss:.4f} | Time: {duration:.2f}s")
-            
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                checkpoint_path = output_dir / "best_model.pt"
-                print(f"New best validation loss. Saving model to {checkpoint_path}")
-                save_checkpoint(model, optimizer, i, str(checkpoint_path))
+                # Evaluate and log
+                if iteration % args.eval_interval == 0 or iteration == args.max_iters - 1:
+                    val_loss = evaluate(model, val_data, args.context_length, args.batch_size, device)
+                    duration = time.time() - start_time
+                    print(f"Iter {i:5d} | Train Loss: {loss.item():.4f} | Val Loss: {val_loss:.4f} | Time: {duration:.2f}s")
+                    
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        checkpoint_path = output_dir / "best_model.pt"
+                        print(f"New best validation loss. Saving model to {checkpoint_path}")
+                        save_checkpoint(model, optimizer, i, str(checkpoint_path))
     
     print("Training finished.")
 

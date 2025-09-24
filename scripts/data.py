@@ -15,30 +15,18 @@ def get_batch(
     y = np.stack([dataset[id+1:id+context_length+1] for id in idxs])
     return torch.from_numpy(x).to(device),torch.from_numpy(y).to(device)
 
-class Dataset:
-    def __init__(self, dataset_name: str, context_length: int, batch_size: int, device: str, **kwargs):
-        dataset_path = os.path.join("data", dataset_name)
-        self.train_data = np.memmap(os.path.join(dataset_path, "train.bin"), dtype=np.uint16, mode='r').astype(np.int64)
-        self.val_data = np.memmap(os.path.join(dataset_path, "val.bin"), dtype=np.uint16, mode='r').astype(np.int64)
+class TokenDataset(torch.utils.data.Dataset):
+    def __init__(self, npy_path, context_length=256):
+        # 使用 mmap_mode="r" 节省内存
+        self.data = np.load(npy_path, mmap_mode="r")
         self.context_length = context_length
-        self.batch_size = batch_size
-        self.device = device
-    
-    def get_batch(self, split: str) -> Tuple[torch.Tensor, torch.Tensor]:
-        data = self.train_data if split == 'train' else self.val_data
-        return get_batch(data, self.batch_size, self.context_length, self.device)
-    
-    def get_train_data(self):
-        return self.train_data
-    
-    def get_val_data(self):
-        return self.val_data
-    
+
     def __len__(self):
-        return len(self.train_data) if hasattr(self, "train_data") else 0
+        # 留一个预测用的 y，所以长度要减去 context_length
+        # return len(self.data) - self.context_length
+        return len(self.data)
 
     def __getitem__(self, idx):
-        # 默认从 train_data 取，可以加个参数控制
-        x = self.train_data[idx: idx+self.context_length]
-        y = self.train_data[idx+1: idx+self.context_length+1]
-        return torch.tensor(x, dtype=torch.long), torch.tensor(y, dtype=torch.long)
+        x = torch.tensor(self.data[idx:idx+self.context_length])
+        y = torch.tensor(self.data[idx+1:idx+self.context_length+1])
+        return x, y

@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple, Union, Iterable, Optional,Iterator
 import regex
 import json
 import torch
+import numpy as np
 
 def gpt2_bytes_to_unicode() -> dict[int, str]:
     """
@@ -346,7 +347,7 @@ class Tokenizer:
         # 返回词表和合并规则
         return cls(vocab=vocab, merges=merges, special_tokens=special_tokens)
     
-    def save_files(self, vocab_filepath: str, merges_filepath: str) -> None:
+    def save_vocab_merges(self, vocab_filepath: str, merges_filepath: str) -> None:
         """
         将 Tokenizer 的 vocab 和 merges 保存到文件，便于以后用 from_files 加载。
 
@@ -371,3 +372,6 @@ class Tokenizer:
                 a_str = "".join(gpt2_encoder[byte] for byte in a)
                 b_str = "".join(gpt2_encoder[byte] for byte in b)
                 f.write(f"{a_str} {b_str}\n")
+                
+    def save_token_ids(self, token_ids_path, text_path):
+        np.save(token_ids_path, np.array(self.encode(text_path)))

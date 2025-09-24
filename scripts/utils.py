@@ -27,7 +27,7 @@ class CrossEntropyLoss(nn.Module):
     def forward(self, inputs, targets):
         y = log_softmax(inputs,-1) # 要在softmax中途就log，保证计算准确性
         y_select = y[torch.arange(inputs.shape[0]),targets] # 选出每行对应target类别的值
-        return -y_select.mean()
+        return - y_select.mean()
 
    
 class GradientClip:
