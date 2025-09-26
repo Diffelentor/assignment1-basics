@@ -5,6 +5,7 @@ import regex
 import json
 import torch
 import numpy as np
+from tqdm import tqdm
 
 def gpt2_bytes_to_unicode() -> dict[int, str]:
     """
@@ -210,7 +211,7 @@ class Tokenizer:
         else:
             chunks = [text]
         token_ids = []
-        for chunk in chunks:
+        for chunk in tqdm(chunks, desc="Encoding chunks", unit="chunk"):
             # print(self._encode_chunk(chunk))
             token_ids.extend(self._encode_chunk(chunk))
         return token_ids
@@ -296,7 +297,8 @@ class Tokenizer:
         chunks = regex.split("|".join(map(regex.escape, special_tokens)), text) #首先按照特殊字符进行大分割，比如<endoftext>按照章节分割
         # 然后在大分割里小分割，按照空格和标点
         PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-        for chunk in chunks:
+        print("开始初始化token_seq_frequency_table")
+        for chunk in tqdm(chunks, desc="始化token_seq_frequency_table", unit="chunk"):
             for word in regex.findall(PAT, chunk):
                 word_bytes = word.encode("utf-8") #对每一个单词进行编码，并转换为bytes
                 bytes_list = [bytes([x]) for x in word_bytes] #e.g. ['h', 'e', 'l', 'l', 'o']
@@ -304,6 +306,8 @@ class Tokenizer:
 
         merges: List[Tuple[bytes, bytes]] = [] # 用于存储合并操作记录
      
+        pbar = tqdm(total=vocab_size, desc="Training BPE", unit="merge")
+        pbar.update(len(vocab))
         # BPE 训练
         while len(vocab) < vocab_size:
             # 统计相邻 token 的频率
@@ -349,7 +353,7 @@ class Tokenizer:
                 new_seq=tuple(new_seq)
                 del token_seq_frequency_table[token_seq]
                 token_seq_frequency_table[new_seq] += freq
-            
+            pbar.update(1)            
         # 返回词表和合并规则
         return cls(vocab=vocab, merges=merges, special_tokens=special_tokens)
     
